@@ -1,0 +1,14 @@
+torch>=2.1.0
+transformers>=4.40.0
+accelerate
+flash-attn
+hydra-core
+ray[default]
+vllm>=0.8.0
+peft>=0.10.0
+numpy<2.0.0
+tensordict>=0.8.0,<=0.10.0,!=0.9.0
+datasets
+pandas
+wandb
+tensorboard
