@@ -43,6 +43,9 @@ TTP employs a two-stage training paradigm built on top of an LLM-based embedding
 ttp/
 ├── README.md
 ├── .gitignore
+├── requirements/               # Environment dependencies
+│   ├── sft.txt                 # Stage 1 (SFT) & Distill Retriever
+│   └── rl.txt                  # Stage 2 (GRPO RL)
 ├── scripts/                    # Training launch scripts
 │   ├── run_sft.sh              # Stage 1: Cold-Start SFT
 │   ├── run_grpo.sh             # Stage 2: GRPO RL Alignment
@@ -77,25 +80,37 @@ ttp/
 
 ## Requirements
 
-- Python >= 3.10
-- PyTorch >= 2.1
-- 8x NVIDIA A100 80GB GPUs
-- Key dependencies:
-  - `transformers`, `accelerate` (for SFT and Distillation)
-  - `vllm` (for RL rollout generation)
-  - `ray` (for distributed RL training)
-  - `hydra-core` (for RL config management)
+SFT and RL stages use **different environments** due to framework version constraints. We provide separate requirements files under `requirements/`.
 
-Install dependencies:
+### Stage 1 & Distill Retriever Environment
+
+- Python >= 3.10
+- PyTorch 2.6.0
+- Transformers 4.51.2
+- vLLM 0.8.5
+- 8x NVIDIA A100 80GB GPUs
 
 ```bash
-# For SFT and Distill Retriever
-pip install transformers accelerate peft deepspeed
+pip install -r requirements/sft.txt
+```
 
-# For GRPO RL (install verl)
+### Stage 2 (GRPO RL) Environment
+
+- Python >= 3.10
+- PyTorch 2.8.0
+- Transformers 4.57.1
+- vLLM 0.10.2
+- 8x NVIDIA A100 80GB GPUs
+
+```bash
+pip install -r requirements/rl.txt
+
+# Additionally, install verl from local source
 cd ttp_rl
 pip install -e .
 ```
+
+> **Note:** The two stages require separate virtual environments (e.g., via `conda` or `venv`) as their core dependency versions are incompatible.
 
 ## Training
 
