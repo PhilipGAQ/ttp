@@ -23,25 +23,10 @@ from collections import defaultdict
 import torch
 import torch.nn.functional as F
 
-
-def retrieval_reward_map_func(old_rewards: torch.Tensor, device) -> torch.Tensor:
-    """
-    Map retrieval rewards to a wider range for better training signal.
-    Adapted from o1-embedder-training.
-    """
-    rewards = old_rewards.clone()
-    rewards = torch.where(rewards > 0.05, torch.tensor(10.0, device=device), rewards)
-    rewards = torch.where((rewards > 0.045) & (rewards <= 0.05), torch.tensor(7.5, device=device), rewards)
-    rewards = torch.where((rewards > 0.04) & (rewards <= 0.045), torch.tensor(5.0, device=device), rewards)
-    rewards = torch.where((rewards > 0.035) & (rewards <= 0.04), torch.tensor(4.5, device=device), rewards)
-    rewards = torch.where((rewards > 0.03) & (rewards <= 0.035), torch.tensor(4.0, device=device), rewards)
-    rewards = torch.where((rewards > 0.025) & (rewards <= 0.03), torch.tensor(2.5, device=device), rewards)
-    rewards = torch.where((rewards > 0.02) & (rewards <= 0.025), torch.tensor(2.0, device=device), rewards)
-    rewards = torch.where((rewards > 0.015) & (rewards <= 0.02), torch.tensor(1.5, device=device), rewards)
-    rewards = torch.where((rewards > 0.01) & (rewards <= 0.015), torch.tensor(1.0, device=device), rewards)
-    rewards = torch.where((rewards > 0) & (rewards <= 0.01), torch.tensor(0.5, device=device), rewards)
-    rewards = torch.where(rewards <= 0, torch.tensor(-3.5, device=device), rewards)
-    return rewards
+try:
+    import pytrec_eval
+except ImportError:
+    pytrec_eval = None
 
 
 def evaluate_ndcg(
@@ -59,6 +44,8 @@ def evaluate_ndcg(
     Returns:
         Dictionary mapping metric names to scores
     """
+    if pytrec_eval is None:
+        raise ImportError("pytrec_eval is required for nDCG evaluation. Install with: pip install pytrec_eval-0.5")
     ndcg_string = "ndcg_cut." + ",".join([str(k) for k in k_values])
     evaluator = pytrec_eval.RelevanceEvaluator(qrels, {ndcg_string})
     scores = evaluator.evaluate(results)

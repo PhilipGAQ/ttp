@@ -66,7 +66,6 @@ python -m recipe.ttp_grpo.main_gap_grpo \
     actor_rollout_ref.rollout.max_model_len=1024 \
     \
     algorithm.adv_estimator=grpo \
-    algorithm.kl_ctrl.kl_coef=0.001 \
     \
     reward_model.reward_kwargs.format_weight=0.5 \
     reward_model.reward_kwargs.retrieval_weight=2.0 \
@@ -80,6 +79,8 @@ python -m recipe.ttp_grpo.main_gap_grpo \
     reward_model.reward_kwargs.retrieval_reward_neg_weight=1.0 \
     reward_model.reward_kwargs.temperature=0.02 \
     reward_model.reward_kwargs.use_retrieval_reward_map=true \
+    reward_model.reward_kwargs.retrieval_reward_clip_range=100.0 \
+    reward_model.reward_kwargs.retrieval_reward_target_range=1.0 \
     reward_model.reward_kwargs.use_asymmetric_clip=false \
     \
     gap_config.embedder_loss_weight=0.1 \

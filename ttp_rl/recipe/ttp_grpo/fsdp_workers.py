@@ -561,7 +561,7 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                         
                         all_ori_queries.append(ori_text)
                         all_rewritten_queries.append(rew_text)
-                        all_passages_list.append(all_passages)
+                        all_passages_list.append((all_passages, len(pos_passages)))
                         valid_indices.append(i)
                         skipped_reasons["valid"] += 1
                     
@@ -585,7 +585,7 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                         # Compute passage embeddings (flatten all passages)
                         passage_start_indices = [0]
                         all_passages_flat = []
-                        for passages in all_passages_list:
+                        for passages, _num_pos in all_passages_list:
                             all_passages_flat.extend(passages)
                             passage_start_indices.append(len(all_passages_flat))
                         
@@ -625,7 +625,7 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                                     "passage_embeddings": sample_passage_embs.float().cpu().numpy(),
                                     "ori_sim_scores": ori_scores[0].float().cpu().numpy(),
                                     "rewritten_sim_scores": rewritten_scores[0].float().cpu().numpy(),
-                                    "num_pos_passages": len(all_passages_list[idx]) if idx < len(all_passages_list) else 0,
+                                    "num_pos_passages": all_passages_list[idx][1] if idx < len(all_passages_list) else 0,
                                 }
                                 output.non_tensor_batch["retrieval_scores"][i] = retrieval_data
                             
