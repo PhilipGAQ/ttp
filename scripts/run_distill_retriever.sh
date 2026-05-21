@@ -1,25 +1,4 @@
 #!/bin/bash
-# =============================================================================
-# Stage: Distill Retriever Training Script
-# =============================================================================
-# Paper: Think-to-Personalize (TTP)
-# Section 4.4 Online Deployment - Distilled Real-Time Retrieval
-#
-# Paper Parameters (Section 4.4):
-#   - Teacher: Full TTP model (3B)
-#   - Student: Encoder-only bi-encoder (305M, BERT-style)
-#   - Objective: InfoNCE-style contrastive learning
-#   - Three positive pairs with equal weights (1:1:1):
-#     1. ⟨q, p+⟩: original query vs positive item
-#     2. ⟨q_r, p+⟩: intent-enhanced query vs positive item
-#     3. ⟨q, q_r⟩: original query vs intent-enhanced query
-#   - In-batch negatives: enabled
-#   - Temperature (τ): 0.02
-#   - Input truncation: 512 tokens (query and passage)
-#   - Embedding normalization: enabled
-#   - GPUs: 8x NVIDIA A100 (4 used via accelerate config)
-# =============================================================================
-
 set -e
 
 export WANDB_DISABLED=true
@@ -27,17 +6,14 @@ export SWANLAB_MODE=disabled
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
-# ===== Paths (fill in your actual paths) =====
-BASE_MODEL="path/to/encoder_model"               # 305M encoder-only model (e.g., BERT-based)
-TRAIN_DATA="path/to/distill_train_data.jsonl"    # Data with (query, intent-enhanced query, positive item)
+BASE_MODEL="path/to/encoder_model"               
+TRAIN_DATA="path/to/distill_train_data.jsonl"   
 OUTPUT_DIR="path/to/output/distill_retriever_checkpoint"
 TB_LOG_DIR="path/to/logs/tensorboard/distill_retriever"
 CACHE_DIR="path/to/cache"
 
-# ===== Navigate to code root =====
 cd "$(dirname "$0")/.."
 
-# ===== Launch Distill Retriever Training =====
 accelerate launch \
     --config_file scripts/accelerate_config.yaml \
     -m distill_retriever \

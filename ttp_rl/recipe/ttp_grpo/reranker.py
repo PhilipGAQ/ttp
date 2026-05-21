@@ -82,8 +82,6 @@ class RewriteRewardModel:
             
             self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
             
-            # Always load on CPU first with float32 (will be converted on first use if lazy)
-            # This ensures compatibility with Ray's CUDA_VISIBLE_DEVICES management
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name_or_path,
                 torch_dtype=torch.float32,  # Load as float32, convert to fp16 when moving to GPU

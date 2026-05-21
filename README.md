@@ -6,6 +6,9 @@ Official implementation of **"Think-to-Personalize: Unifying Reasoning and Retri
 
 ```
 ttp/
+├── process/
+│   ├── kuaisearch.py           # KuaiSearch data processing
+│   └── personalwab.py          # PersonalWAB data processing
 ├── requirements/
 │   ├── sft.txt                 # Stage 1 & Distill Retriever dependencies
 │   └── rl.txt                  # Stage 2 (GRPO RL) dependencies
@@ -38,16 +41,50 @@ requirements/sft.txt
 requirements/rl.txt
 ```
 
-## Data Construction
+## Data Preparation
 
-Training data is constructed via a teacher model (Qwen3-32B) following a filter → rewrite → select pipeline:
+- `process/kuaisearch.py` — Builds train/test splits from KuaiSearch
+- `process/personalwab.py` — Builds train/test splits from PersonalWAB
 
-1. **History filtering**: For each user query, select the top-10 most relevant items from the user's purchase history using bge-reranker-v2-m3.
-2. **Candidate generation**: Prompt Qwen3-32B with the user history and query to generate K=5 candidate intent-enhanced rewrites.
-3. **Quality selection**: Score each rewrite by retrieval relevance gain (cosine similarity improvement over the original query against the ground-truth positive item). Keep the best rewrite per query.
-4. **Data split**: Samples with positive gain are used for both SFT and RL. The top-30% highest-gain samples are additionally used as the RL training set.
+The `query_gen` field (generation supervision target) is synthesized by prompting an LLM to produce intent-enhanced query rewrites given the user history and original query.
 
-Each training sample contains: `query`, `pos` (positive item), `neg` (hard negatives), and `query_gen` (the teacher-generated rewrite as the SFT target).
+## Data Format
+
+### Stage 1 (SFT) & Stage 2 (GRPO RL)
+
+```jsonl
+{
+  "id": "sample_001",
+  "query_gen": "rewritten personalized query",
+  "hist_list": [],
+  "query": ["Given a user history sequence and an E-commerce query, analyze the user's intent and rewrite a personalized query to retrieve relevant products. Please output in the format: <think>Rewrite Query</think><emb>.", "original query text"],
+  "pos": [],
+  "neg": []
+}
+```
+
+- `id`: sample identifier
+- `query_gen`: generation target, synthesized by LLM
+- `hist_list`: user history sequence
+- `query`: `[instruction, original_query]`
+- `pos`: positive passage(s)
+- `neg`: hard negative passage(s)
+
+### Distill Retriever
+
+```jsonl
+{
+  "query": "original query text",
+  "query_gen": "TTP-generated intent-enhanced query",
+  "pos": [],
+  "neg": []
+}
+```
+
+- `query`: original query text
+- `query_gen`: TTP-generated intent-enhanced query
+- `pos`: positive passage(s)
+- `neg`: hard negative passage(s)
 
 ## Training
 

@@ -284,14 +284,9 @@ class QueryGenCollator(DataCollatorWithPadding):
                 has_think_content = t_open_id in gen_ids
                 
                 # Build labels: input (-100) + gen (trainable only if has think content) + eos (trainable)
-                # 注意：eos_ids 也需要训练，让模型学会在 <emb> 之后输出 <|im_end|> 并停止
                 if has_think_content:
-                    # 计算截断后实际保留的 eos 长度
-                    # combined_ids 的结构是: input + gen + eos (可能被截断)
                     eos_len = len(combined_ids) - input_len - gen_len
-                    # input 部分 mask，gen 部分可训练，eos 部分也可训练
                     combined_labels = [-100] * input_len + list(gen_ids[:gen_len]) + list(eos_ids[:eos_len])
-                    # 确保长度匹配（理论上应该已经匹配，但保险起见）
                     if len(combined_labels) < len(combined_ids):
                         combined_labels += [-100] * (len(combined_ids) - len(combined_labels))
                     elif len(combined_labels) > len(combined_ids):

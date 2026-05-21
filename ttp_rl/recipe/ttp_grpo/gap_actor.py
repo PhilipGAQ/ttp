@@ -553,44 +553,68 @@ class GapGRPOActor(DataParallelPPOActor):
         input_ids = model_inputs["input_ids"]
         batch_size = input_ids.size(0)
         
-        # 🔑 Priority 1: Use top-level query_prompt_no_hist if available (passed from dataset)
-        query_prompts_no_hist = model_inputs.get("query_prompt_no_hist", None)
-        
-        # Priority 2: Try to get from extra_info
-        extra_info = model_inputs.get("extra_info", None)
-        if query_prompts_no_hist is None:
-            if extra_info is not None:
-                if isinstance(extra_info, (list, np.ndarray, torch.Tensor)):
-                    if hasattr(extra_info, 'tolist'):
-                        extra_info = extra_info.tolist()
-                    query_prompts_no_hist = [
-                        e.get("query_prompt_no_hist", "") if isinstance(e, dict) else ""
-                        for e in extra_info
-                    ]
-        
-        # Convert to list if it's a single string or numpy array
-        if query_prompts_no_hist is not None:
-            if isinstance(query_prompts_no_hist, (np.ndarray, torch.Tensor)):
-                query_prompts_no_hist = query_prompts_no_hist.tolist()
-            elif isinstance(query_prompts_no_hist, str):
-                query_prompts_no_hist = [query_prompts_no_hist] * batch_size
-
-        if not query_prompts_no_hist or not any(query_prompts_no_hist):
-            # Fallback: extract from hidden states (less accurate but safe)
-            emb, _ = self._extract_embeddings(last_hidden_state, input_ids)
-            return emb
-        
-        # Get response texts
+        # Get response texts first (needed for both mask_hist modes)
         responses = model_inputs.get("responses", None)
         if responses is None:
             emb, _ = self._extract_embeddings(last_hidden_state, input_ids)
             return emb
         
-        # Calculate prompt length to extract response
         prompt_length = input_ids.size(1) - responses.size(1)
         response_texts = self._extract_response_text(input_ids, prompt_length)
         
-        # 🔑 NEW: Conditional query construction based on retrieval_rewards or force flag
+        extra_info = model_inputs.get("extra_info", None)
+        
+        # Determine query prompt prefix based on mask_hist setting
+        # mask_hist=True (default): use query_prompt_no_hist (without history)
+        # mask_hist=False: use full prompt decoded from input_ids (with history)
+        if not self.mask_hist:
+            # Use the full prompt (with history) decoded from input_ids
+            query_prompts_for_emb = []
+            attention_mask = model_inputs.get("attention_mask", None)
+            if self.tokenizer is not None:
+                pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+                for i in range(batch_size):
+                    prompt_ids = input_ids[i, :prompt_length]
+                    # Strip left-padding tokens
+                    if attention_mask is not None:
+                        prompt_mask = attention_mask[i, :prompt_length]
+                        prompt_ids = prompt_ids[prompt_mask.bool()]
+                    else:
+                        # Fallback: strip leading pad tokens manually
+                        mask = prompt_ids != pad_token_id
+                        if mask.any():
+                            first_valid = mask.nonzero(as_tuple=True)[0][0]
+                            prompt_ids = prompt_ids[first_valid:]
+                    prompt_text = self.tokenizer.decode(prompt_ids, skip_special_tokens=False)
+                    query_prompts_for_emb.append(prompt_text)
+            if not query_prompts_for_emb:
+                emb, _ = self._extract_embeddings(last_hidden_state, input_ids)
+                return emb
+        else:
+            # Use query_prompt_no_hist (without history)
+            query_prompts_for_emb = model_inputs.get("query_prompt_no_hist", None)
+            
+            if query_prompts_for_emb is None:
+                if extra_info is not None:
+                    if isinstance(extra_info, (list, np.ndarray, torch.Tensor)):
+                        if hasattr(extra_info, 'tolist'):
+                            extra_info = extra_info.tolist()
+                        query_prompts_for_emb = [
+                            e.get("query_prompt_no_hist", "") if isinstance(e, dict) else ""
+                            for e in extra_info
+                        ]
+            
+            if query_prompts_for_emb is not None:
+                if isinstance(query_prompts_for_emb, (np.ndarray, torch.Tensor)):
+                    query_prompts_for_emb = query_prompts_for_emb.tolist()
+                elif isinstance(query_prompts_for_emb, str):
+                    query_prompts_for_emb = [query_prompts_for_emb] * batch_size
+
+            if not query_prompts_for_emb or not any(query_prompts_for_emb):
+                # Fallback: extract from hidden states (less accurate but safe)
+                emb, _ = self._extract_embeddings(last_hidden_state, input_ids)
+                return emb
+        
         use_original_query_mask = None
         query_texts_for_emb = None  # Initialize to avoid UnboundLocalError
         
@@ -605,8 +629,8 @@ class GapGRPOActor(DataParallelPPOActor):
                     extra_info = None
                 
                 if extra_info and len(extra_info) == batch_size:
-                    # Verify query_prompts_no_hist and response_texts lengths match
-                    if len(query_prompts_no_hist) == batch_size and len(response_texts) == batch_size:
+                    # Verify query_prompts_for_emb and response_texts lengths match
+                    if len(query_prompts_for_emb) == batch_size and len(response_texts) == batch_size:
                         # Build query texts with all original queries
                         query_texts_for_emb = []
                         for i in range(batch_size):
@@ -621,7 +645,7 @@ class GapGRPOActor(DataParallelPPOActor):
                                 if original_query_text:
                                     # Build: query_prompt_no_hist + <think> + original_query + </think> + <emb>
                                     query_text = (
-                                        str(query_prompts_no_hist[i]) + 
+                                        str(query_prompts_for_emb[i]) + 
                                         self.think_open + 
                                         original_query_text + 
                                         self.think_close + 
@@ -631,27 +655,27 @@ class GapGRPOActor(DataParallelPPOActor):
                                     query_texts_for_emb.append(query_text)
                                 else:
                                     # Fallback to rewritten query if original_query is empty
-                                    query_texts_for_emb.append(str(query_prompts_no_hist[i]) + response_texts[i])
+                                    query_texts_for_emb.append(str(query_prompts_for_emb[i]) + response_texts[i])
                             else:
                                 # Fallback to rewritten query if extra_info format is wrong
-                                query_texts_for_emb.append(str(query_prompts_no_hist[i]) + response_texts[i])
+                                query_texts_for_emb.append(str(query_prompts_for_emb[i]) + response_texts[i])
                     else:
                         # Length mismatch, fallback to rewritten queries
                         query_texts_for_emb = [
                             str(qp) + resp
-                            for qp, resp in zip(query_prompts_no_hist, response_texts)
+                            for qp, resp in zip(query_prompts_for_emb, response_texts)
                         ]
                 else:
                     # extra_info format wrong or missing, fallback to rewritten queries
                     query_texts_for_emb = [
                         str(qp) + resp
-                        for qp, resp in zip(query_prompts_no_hist, response_texts)
+                        for qp, resp in zip(query_prompts_for_emb, response_texts)
                     ]
             else:
                 # No extra_info, fallback to rewritten queries
                 query_texts_for_emb = [
                     str(qp) + resp
-                    for qp, resp in zip(query_prompts_no_hist, response_texts)
+                    for qp, resp in zip(query_prompts_for_emb, response_texts)
                 ]
         elif retrieval_rewards is not None and len(retrieval_rewards) == batch_size:
             # Conditional mode: samples with negative retrieval rewards use original query
@@ -666,8 +690,8 @@ class GapGRPOActor(DataParallelPPOActor):
                     extra_info = None
                 
                 if extra_info and len(extra_info) == batch_size:
-                    # Verify query_prompts_no_hist and response_texts lengths match
-                    if len(query_prompts_no_hist) == batch_size and len(response_texts) == batch_size:
+                    # Verify query_prompts_for_emb and response_texts lengths match
+                    if len(query_prompts_for_emb) == batch_size and len(response_texts) == batch_size:
                         # Build query texts with conditional logic
                         query_texts_for_emb = []
                         for i in range(batch_size):
@@ -684,7 +708,7 @@ class GapGRPOActor(DataParallelPPOActor):
                                     if original_query_text:
                                         # Build: query_prompt_no_hist + <think> + original_query + </think> + <emb>
                                         query_text = (
-                                            str(query_prompts_no_hist[i]) + 
+                                            str(query_prompts_for_emb[i]) + 
                                             self.think_open + 
                                             original_query_text + 
                                             self.think_close + 
@@ -694,36 +718,36 @@ class GapGRPOActor(DataParallelPPOActor):
                                         query_texts_for_emb.append(query_text)
                                     else:
                                         # Fallback to rewritten query if original_query is empty
-                                        query_texts_for_emb.append(str(query_prompts_no_hist[i]) + response_texts[i])
+                                        query_texts_for_emb.append(str(query_prompts_for_emb[i]) + response_texts[i])
                                 else:
                                     # Fallback to rewritten query if extra_info format is wrong
-                                    query_texts_for_emb.append(str(query_prompts_no_hist[i]) + response_texts[i])
+                                    query_texts_for_emb.append(str(query_prompts_for_emb[i]) + response_texts[i])
                             else:
                                 # Use rewritten query for positive/zero rewards
-                                query_texts_for_emb.append(str(query_prompts_no_hist[i]) + response_texts[i])
+                                query_texts_for_emb.append(str(query_prompts_for_emb[i]) + response_texts[i])
                     else:
                         # Length mismatch, fallback to rewritten queries
                         query_texts_for_emb = [
                             str(qp) + resp
-                            for qp, resp in zip(query_prompts_no_hist, response_texts)
+                            for qp, resp in zip(query_prompts_for_emb, response_texts)
                         ]
                 else:
                     # extra_info format wrong, use all rewritten queries
                     query_texts_for_emb = [
                         str(qp) + resp
-                        for qp, resp in zip(query_prompts_no_hist, response_texts)
+                        for qp, resp in zip(query_prompts_for_emb, response_texts)
                     ]
             else:
                 # No negative rewards or no extra_info, use all rewritten queries
                 query_texts_for_emb = [
                     str(qp) + resp
-                    for qp, resp in zip(query_prompts_no_hist, response_texts)
+                    for qp, resp in zip(query_prompts_for_emb, response_texts)
                 ]
         else:
             # No retrieval_rewards provided, use all rewritten queries (original behavior)
             query_texts_for_emb = [
                 str(qp) + resp
-                for qp, resp in zip(query_prompts_no_hist, response_texts)
+                for qp, resp in zip(query_prompts_for_emb, response_texts)
             ]
         
         # Ensure query_texts_for_emb is defined (safety check)
@@ -731,7 +755,7 @@ class GapGRPOActor(DataParallelPPOActor):
             # Final fallback: use all rewritten queries
             query_texts_for_emb = [
                 str(qp) + resp
-                for qp, resp in zip(query_prompts_no_hist, response_texts)
+                for qp, resp in zip(query_prompts_for_emb, response_texts)
             ]
         
         # Forward through model to get embeddings
@@ -882,7 +906,6 @@ class GapGRPOActor(DataParallelPPOActor):
                     infonce_loss_tensor = None  # Store tensor for combination
                     infonce_computed = False
                     if self.embedder_loss_weight > 0 and self.emb_token_id is not None and self.infonce_loss_fn is not None:
-                        # 🔑 Step 1: Get retrieval rewards to select best rewrites (o1-embedder style)
                         extra_info = model_inputs.get("extra_info", None)
                         retrieval_rewards_all = None
                         use_best_selection = self.use_best_rewrite_selection
@@ -915,15 +938,12 @@ class GapGRPOActor(DataParallelPPOActor):
                                             device=last_hidden_state.device
                                         )
                         
-                        # 🔑 Step 2: Select indices for InfoNCE (best selection or deduplication)
                         selected_indices = None
                         use_original_query_for_infonce = False  # Flag to control query type
                         
                         batch_size = last_hidden_state.size(0)
                         
                         if not use_best_selection:
-                            # 🔑 Best selection disabled: Deduplicate and use original query
-                            # Sample every num_generations-th sample (first sample from each group)
                             if batch_size % num_generations == 0:
                                 num_queries = batch_size // num_generations
                                 selected_indices = list(range(0, batch_size, num_generations))
@@ -940,9 +960,7 @@ class GapGRPOActor(DataParallelPPOActor):
                                 selected_indices = None
                                 use_original_query_for_infonce = False
                         elif retrieval_rewards_all is not None and len(retrieval_rewards_all) > 0:
-                            # 🔑 Best selection enabled: Select best rewrite for each query
                             try:
-                                # Validate length before reshape
                                 if len(retrieval_rewards_all) == batch_size and batch_size % num_generations == 0:
                                     num_queries = batch_size // num_generations
                                     rewards_reshaped = retrieval_rewards_all.view(num_queries, num_generations)
@@ -963,7 +981,7 @@ class GapGRPOActor(DataParallelPPOActor):
                                     if batch_idx == 0 and epoch_idx == 0 and micro_idx == 0:
                                         print_rank_0(f"[GapActor] Using best rewrite selection: {len(selected_indices)} samples selected from {batch_size}")
                                 else:
-                                    if batch_idx == 0 and epoch_idx == 0: # 仅在第一次打印提示，避免刷屏
+                                    if batch_idx == 0 and epoch_idx == 0: 
                                         print_rank_0(f"[GapActor] Micro-batch size ({batch_size}) is not a multiple of num_generations ({num_generations}). "
                                                     f"Best rewrite selection is disabled for this step. "
                                                     f"To enable, set PPO_MICRO_BATCH_SIZE to a multiple of {num_generations}.")
@@ -974,7 +992,6 @@ class GapGRPOActor(DataParallelPPOActor):
                                 selected_indices = None
                                 use_original_query_for_infonce = False
                         
-                        # 🔑 Step 3: Get passage texts first (before filtering)
                         # We need to check pos_texts length before filtering query_embeddings
                         pos_texts = model_inputs.get("pos_text", None)
                         query_prompt_no_hist_batch = model_inputs.get("query_prompt_no_hist", None)
@@ -1020,7 +1037,6 @@ class GapGRPOActor(DataParallelPPOActor):
                                 )
                                 selected_indices = None
                         
-                        # 🔑 Step 4: Compute query embeddings (potentially filtered)
                         if selected_indices is not None:
                             # Save references to original data (needed for replacing with original query)
                             original_model_inputs = model_inputs
@@ -1062,7 +1078,6 @@ class GapGRPOActor(DataParallelPPOActor):
                                 force_use_original_query=use_original_query_for_infonce
                             )
                         
-                        # 🔑 Step 5: Filter pos_texts if using best selection (after query_embeddings computed)
                         if pos_texts is not None:
                             if hasattr(pos_texts, 'tolist'):
                                 pos_texts = pos_texts.tolist()
@@ -1072,7 +1087,6 @@ class GapGRPOActor(DataParallelPPOActor):
                             
                             valid_pos_texts = [str(t) for t in pos_texts if t and str(t).strip()]
                             
-                            # 🔍 Track why InfoNCE computation might fail
                             infonce_fail_reason = None
                             if not valid_pos_texts:
                                 # Check if pos_texts contains empty strings

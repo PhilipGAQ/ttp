@@ -56,7 +56,6 @@ class GapGRPOV3Trainer(RayPPOTrainer):
             non_tensor_batch_keys=list(non_tensor_batch_keys_to_pop),
         )
         
-        # 🔑 CRITICAL: Manually add shared_keys to gen_batch
         # Since pop doesn't include them, we need to copy them over
         for key in shared_keys:
             if key in batch.non_tensor_batch:

@@ -164,18 +164,7 @@ def compute_format_reward(
     else:
         info["length_penalty"] = 0.0
 
-    # ================== Query containment penalty ==================
-    # Only check content within Chinese parentheses "（）" in the original query.
-    # If the original query has content in "（）", the rewritten query should also contain it.
-    #
-    # Implementation detail:
-    # - Extract all content within Chinese parentheses "（）" from original query
-    # - Check if rewritten query contains each extracted content
-    # - Penalty is proportional to missing content ratio:
-    #       missing_ratio = (# of missing parentheses content) / (# of total parentheses content)
-    #       reward += containment_penalty * missing_ratio
-    #
-    # This keeps the penalty in the "format reward" component.
+
     if original_query is not None and info.get("rewritten_query"):
         try:
             cleaned_original = preprocess_query_for_reranker(original_query)
@@ -228,7 +217,7 @@ def compute_rewrite_gain_reward(
     positive_doc: str,
     reward_model: Optional[RewriteRewardModel] = None,
     gain_scale: float = 1.0,
-    penalty_scale: float = 0.5,  # 当相似度降低时的惩罚系数，默认0.5表示惩罚减半
+    penalty_scale: float = 0.5,
     min_reward: float = -1.0,
     max_reward: float = 1.0,
     reward_model_path: Optional[str] = None,  # If None, uses global setting
@@ -283,7 +272,6 @@ def compute_rewrite_gain_reward(
     # Compute gain
     gain = rewritten_score - original_score
     
-    # 如果相似度降低（gain < 0），使用较小的惩罚系数
     if gain < 0:
         reward = penalty_scale * gain
     else:
@@ -325,7 +313,7 @@ def compute_score(
     # Rewrite gain params
     reward_model_path: Optional[str] = None,  # If None, uses global setting
     gain_scale: float = 1.0,
-    penalty_scale: float = 0.5,  # 当相似度降低时的惩罚系数
+    penalty_scale: float = 0.5,  
 ) -> Dict[str, Any]:
     """
     Main reward computation function for GAP-GRPO.
@@ -445,7 +433,7 @@ def compute_score_batch(
     # Rewrite gain params
     reward_model_path: Optional[str] = None,
     gain_scale: float = 1.0,
-    penalty_scale: float = 0.5,  # 当相似度降低时的惩罚系数
+    penalty_scale: float = 0.5, 
     **kwargs,
 ) -> List[Dict[str, Any]]:
     """
@@ -465,17 +453,14 @@ def compute_score_batch(
         List of result dicts with 'score' key and metrics
     """
     batch_size = len(solution_strs)
-    # extra_infos 可能是 None、list 或 numpy 数组，不能直接用 `or` 判断真值
     if extra_infos is None:
         extra_infos = [{}] * batch_size
     else:
-        # 将 numpy.array 等统一转成 Python list，方便后续按索引取用
         if hasattr(extra_infos, "tolist"):
             extra_infos = list(extra_infos.tolist())
         elif not isinstance(extra_infos, list):
             extra_infos = list(extra_infos)
     
-    # Check if rewrite gain reward is disabled (skip reranker entirely)
     skip_reranker = (rewrite_gain_weight == 0 or rewrite_gain_weight is None)
     
     log_stage(f"Start reward batch (batch_size={batch_size}, skip_reranker={skip_reranker})")
@@ -616,7 +601,6 @@ def compute_score_batch(
                     rewritten_score = all_scores[j * 2 + 1]
                     
                     gain = rewritten_score - original_score
-                    # 如果相似度降低（gain < 0），使用较小的惩罚系数
                     if gain < 0:
                         reward = penalty_scale * gain
                     else:

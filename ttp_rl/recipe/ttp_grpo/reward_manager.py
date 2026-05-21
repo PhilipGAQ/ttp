@@ -100,7 +100,7 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
         use_retrieval_reward_map: bool = False,
         retrieval_reward_clip_range: float = 100.0,
         retrieval_reward_target_range: float = 2.0,
-        # Asymmetric clip params (新增)
+        # Asymmetric clip params 
         use_asymmetric_clip: bool = False,
         asymmetric_neg_clip: float = None,
         asymmetric_pos_clip: float = None,
@@ -363,7 +363,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
             if "query" not in extra_info_item and isinstance(ground_truth, dict):
                 original_query = ground_truth.get("query", "")
                 if isinstance(original_query, (list, tuple)):
-                    # Handle list/tuple format (e.g., ["商家:xxx", "原始query文本"])
                     original_query = str(original_query[-1]) if original_query else ""
                 else:
                     original_query = str(original_query)
@@ -462,7 +461,7 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                             first_orig_score_batch = all_scores[0]
                             first_rew_score_batch = all_scores[1]
                             
-                            print(f"\n[🔍 Reranker Score Verification] Sample {first_sample_idx}:")
+                            print(f"\n[Reranker Score Verification] Sample {first_sample_idx}:")
                             print(f"  Original Query (preprocessed): {first_cleaned_orig[:100]}...")
                             print(f"  Rewritten Query: {first_cleaned_rew[:100]}...")
                             print(f"  Positive Doc: {first_cleaned_doc[:100]}...")
@@ -471,12 +470,12 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                             
                             # Check if order is correct
                             if abs(first_orig_score_sep - first_orig_score_batch) > 0.01 or abs(first_rew_score_sep - first_rew_score_batch) > 0.01:
-                                print(f"  ⚠️ WARNING: Score mismatch! Order might be wrong!")
+                                print(f"  WARNING: Score mismatch! Order might be wrong!")
                                 print(f"     Expected: orig={first_orig_score_sep:.4f}, rew={first_rew_score_sep:.4f}")
                                 print(f"     Got:      orig={first_orig_score_batch:.4f}, rew={first_rew_score_batch:.4f}")
                                 # Try swapped order
                                 if abs(first_orig_score_sep - first_rew_score_batch) < 0.01 and abs(first_rew_score_sep - first_orig_score_batch) < 0.01:
-                                    print(f"     ✅ FIX: Scores are swapped! Should use swapped order.")
+                                    print(f"    FIX: Scores are swapped! Should use swapped order.")
                         except Exception as e:
                             print(f"[GapGRPOV3RewardManager] Warning: Failed to verify reranker score order: {e}")
                     
@@ -491,7 +490,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                         # Compute gain
                         gain = rewritten_score - original_score
                         
-                        # 🔍 DEBUG: Print detailed info for first sample
                         if j == 0 and DEBUG_LOG_ENABLED:
                             orig_q, rew_q, pos_doc = reranker_pairs[j][1], reranker_pairs[j][2], reranker_pairs[j][3]
                             if preprocess_query_for_reranker:
@@ -499,7 +497,7 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                             else:
                                 cleaned_orig = str(orig_q).split('geohash')[0].strip()
                             cleaned_rew = str(rew_q).strip()
-                            print(f"\n[🔍 Reranker Reward Details] Sample {sample_idx}:")
+                            print(f"\n[Reranker Reward Details] Sample {sample_idx}:")
                             print(f"  Original Query: {cleaned_orig[:150]}")
                             print(f"  Rewritten Query: {cleaned_rew[:150]}")
                             print(f"  Original Score: {original_score:.4f}")
@@ -719,13 +717,11 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                     # Calculate ranking top1 ratio (proportion of samples with rank == 1)
                     top1_count = sum(1 for rank in ranking_ranks_list if rank == 1)
                     ranking_top1_ratio = top1_count / len(ranking_ranks_list) if ranking_ranks_list else 0.0
-                    # 🔑 CRITICAL: Convert scalar to list to prevent 0D array in chunk()
                     # np.array(scalar) creates 0D array, which causes IndexError in chunk()
                     # Repeat the value batch_size times so it can be properly chunked
                     reward_extra_info["ranking_top1_ratio"] = [ranking_top1_ratio] * batch_size
                     reward_extra_info["ranking_ranks_all"] = ranking_ranks_list
                     
-                    # ===== 📊 Sample Logging: Print ONE sampled query per step =====
                     if num_queries >= 1:
                         import random
                         # Sample one query per step (use step number from meta_info if available)
@@ -768,7 +764,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                         best_sample_idx = start_idx + best_gen_idx
                         
                         # Get data for sampled query (use best_sample_idx to match reranker_score)
-                        # ⚠️ FIX: Use best_sample_idx instead of start_idx to ensure consistency
                         # All generations of the same query should have the same original_query and pos_text
                         if best_sample_idx < batch_size:
                             data_item = data[best_sample_idx]
@@ -854,19 +849,19 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                             
                             # Print detailed log
                             print(f"\n{'='*80}")
-                            print(f"[RewardManager] 📊 Step {step_num} - Sampled Query {sampled_query_idx} (Best Generation {best_gen_idx})")
+                            print(f"[RewardManager] Step {step_num} - Sampled Query {sampled_query_idx} (Best Generation {best_gen_idx})")
                             print(f"{'='*80}")
                             
                             # Original Query
-                            print(f"\n【原始Query】")
+                            print(f"\nOriginal Query")
                             print(original_query)
                             
                             # Rewritten Query
-                            print(f"\n【改写Query】(Best, Gen {best_gen_idx})")
+                            print(f"\nRewritten Query(Best, Gen {best_gen_idx})")
                             print(best_rewritten_query)
                             
                             # Positive Passage
-                            print(f"\n【正例Passage】")
+                            print(f"\nPositive Passage")
                             pos_text_str = str(pos_text) if pos_text else "N/A"
                             print(f"{pos_text_str}")
                             
@@ -876,7 +871,7 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                             weighted_retrieval_r = self.retrieval_weight * best_retrieval_r
                             weighted_ranking_r = self.ranking_weight * best_ranking_r
                             
-                            print(f"\n【Reward详情】")
+                            print(f"\n")
                             print(f"  Format Reward: {best_format_r:.4f} (weight={self.format_weight:.2f}, weighted={weighted_format_r:.4f}, correct={best_format_correct})")
                             if self.reranker_reward_weight > 0:
                                 print(f"  Reranker Reward: {best_reranker_r:.4f} (weight={self.reranker_reward_weight:.2f}, weighted={weighted_reranker_r:.4f})")
@@ -893,11 +888,11 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                                     orig_reranker_score = best_reranker_original_score[best_sample_idx]
                                     rew_reranker_score = best_reranker_rewritten_score[best_sample_idx]
                                     
-                                    print(f"\n【Reranker分数】")
-                                    print(f"  原始Query vs Pos: {orig_reranker_score:.4f}")
-                                    print(f"  改写Query vs Pos: {rew_reranker_score:.4f}")
+                                    print(f"\nReranker Score")
+                                    print(f" origin Query vs Pos: {orig_reranker_score:.4f}")
+                                    print(f"  rewrite Query vs Pos: {rew_reranker_score:.4f}")
                                     reranker_improvement = rew_reranker_score - orig_reranker_score
-                                    print(f"  改进: {reranker_improvement:+.4f}")
+                                    print(f"  improvement: {reranker_improvement:+.4f}")
                             
                             # Retrieval Similarity Scores (if available)
                             if retrieval_scores_item is not None and isinstance(retrieval_scores_item, dict):
@@ -910,32 +905,30 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                                     rewritten_sim = np.array(rewritten_sim_scores)
                                     
                                     if len(ori_sim) > 0 and len(rewritten_sim) > 0:
-                                        print(f"\n【Retrieval相似度分数】(Temperature={self.temperature:.3f})")
+                                        print(f"\nRetrieval Similarity Score(Temperature={self.temperature:.3f})")
                                         
-                                        # Pos scores (改写前后)
                                         if num_pos_passages > 0 and len(ori_sim) >= num_pos_passages:
                                             ori_pos_scores = ori_sim[:num_pos_passages]
                                             rew_pos_scores = rewritten_sim[:num_pos_passages]
-                                            print(f"  原始Query vs Pos: mean={np.mean(ori_pos_scores):.4f}, max={np.max(ori_pos_scores):.4f}, min={np.min(ori_pos_scores):.4f}")
-                                            print(f"  改写Query vs Pos: mean={np.mean(rew_pos_scores):.4f}, max={np.max(rew_pos_scores):.4f}, min={np.min(rew_pos_scores):.4f}")
+                                            print(f" origin Query vs Pos: mean={np.mean(ori_pos_scores):.4f}, max={np.max(ori_pos_scores):.4f}, min={np.min(ori_pos_scores):.4f}")
+                                            print(f"  rewrite Query vs Pos: mean={np.mean(rew_pos_scores):.4f}, max={np.max(rew_pos_scores):.4f}, min={np.min(rew_pos_scores):.4f}")
                                             pos_improvement = np.mean(rew_pos_scores) - np.mean(ori_pos_scores)
-                                            print(f"  Pos改进: {pos_improvement:+.4f}")
+                                            print(f"  Pos Improvement: {pos_improvement:+.4f}")
                                         
-                                        # Neg scores (改写前后)
                                         if len(ori_sim) > num_pos_passages:
                                             ori_neg_scores = ori_sim[num_pos_passages:]
                                             rew_neg_scores = rewritten_sim[num_pos_passages:]
-                                            print(f"  原始Query vs Neg: mean={np.mean(ori_neg_scores):.4f}, max={np.max(ori_neg_scores):.4f}, min={np.min(ori_neg_scores):.4f}")
-                                            print(f"  改写Query vs Neg: mean={np.mean(rew_neg_scores):.4f}, max={np.max(rew_neg_scores):.4f}, min={np.min(rew_neg_scores):.4f}")
+                                            print(f"  origin Query vs Neg: mean={np.mean(ori_neg_scores):.4f}, max={np.max(ori_neg_scores):.4f}, min={np.min(ori_neg_scores):.4f}")
+                                            print(f"  rewrite Query vs Neg: mean={np.mean(rew_neg_scores):.4f}, max={np.max(rew_neg_scores):.4f}, min={np.min(rew_neg_scores):.4f}")
                                             neg_improvement = np.mean(rew_neg_scores) - np.mean(ori_neg_scores)
-                                            print(f"  Neg改进: {neg_improvement:+.4f}")
+                                            print(f"  Neg improvement: {neg_improvement:+.4f}")
                                         
                                         # Overall improvement
                                         if len(ori_sim) > 0:
                                             overall_ori = np.mean(ori_sim)
                                             overall_rew = np.mean(rewritten_sim)
                                             overall_improvement = overall_rew - overall_ori
-                                            print(f"  总体改进: {overall_improvement:+.4f} (ori_mean={overall_ori:.4f}, rew_mean={overall_rew:.4f})")
+                                            print(f"  overall: {overall_improvement:+.4f} (ori_mean={overall_ori:.4f}, rew_mean={overall_rew:.4f})")
                             else:
                                 # Debug: print why retrieval scores are not available
                                 if step_num % 10 == 0:  # Only print every 10 steps to avoid spam
@@ -953,7 +946,7 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                                                 print(f"  retrieval_scores dict keys: {list(rs_raw.keys())[:5]}...")
                             
                             # Batch Statistics (summary)
-                            print(f"\n【批次统计】")
+                            print(f"\nBatch Statistics")
                             print(f"  Retrieval Reward: min={min(retrieval_rewards_list):.3f}, max={max(retrieval_rewards_list):.3f}, mean={sum(retrieval_rewards_list)/len(retrieval_rewards_list):.3f}")
                             print(f"  Ranking Top1 Ratio: {ranking_top1_ratio:.3f} ({top1_count}/{len(ranking_ranks_list)})")
                             
@@ -989,8 +982,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                                 self.ranking_weight * ranking_r
                             )
                             
-                            # 🔑 Store all rewards back to extra_info for actor to use
-                            # This enables best-rewrite selection in actor (o1-embedder style)
                             extra_info_item = data[i].non_tensor_batch.get("extra_info", {})
                             if not isinstance(extra_info_item, dict):
                                 extra_info_item = {}
@@ -1015,7 +1006,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                                 self.ranking_weight * 0.0
                             )
                             
-                            # Also store 0.0 in extra_info for consistency
                             extra_info_item = data[i].non_tensor_batch.get("extra_info", {})
                             if not isinstance(extra_info_item, dict):
                                 extra_info_item = {}
@@ -1028,16 +1018,12 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                     reward_extra_info["retrieval_rewards_all"] = retrieval_rewards_list
                     reward_extra_info["ranking_rewards_all"] = ranking_rewards_list
                     reward_extra_info["ranking_ranks_all"] = ranking_ranks_list
-                    # 🔑 CRITICAL: Convert scalar to list to prevent 0D array in chunk()
-                    # np.array(scalar) creates 0D array, which causes IndexError in chunk()
-                    # Repeat the value batch_size times so it can be properly chunked
                     reward_extra_info["ranking_top1_ratio"] = [ranking_top1_ratio] * batch_size
                 
             except Exception as e:
                 import traceback
                 print(f"[GapGRPOV3RewardManager] Warning: Failed to compute retrieval reward: {e}")
                 print(traceback.format_exc())
-                # Fallback: give bonus based on format only
                 for i in range(batch_size):
                     valid_response_length = data[i].batch["attention_mask"][data[i].batch["prompts"].shape[-1]:].sum()
                     format_correct = reward_extra_info["format_correct"][i]
@@ -1060,7 +1046,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                         self.ranking_weight * 0.0
                     )
                     
-                    # Store 0.0 in extra_info for consistency
                     extra_info_item = data[i].non_tensor_batch.get("extra_info", {})
                     if not isinstance(extra_info_item, dict):
                         extra_info_item = {}
@@ -1070,7 +1055,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                     extra_info_item["total_reward"] = total_reward.item() if isinstance(total_reward, torch.Tensor) else total_reward
                     data[i].non_tensor_batch["extra_info"] = extra_info_item
         else:
-            # No retrieval data available, give bonus based on format only
             for i in range(batch_size):
                 valid_response_length = data[i].batch["attention_mask"][data[i].batch["prompts"].shape[-1]:].sum()
                 format_correct = reward_extra_info["format_correct"][i]
@@ -1093,7 +1077,6 @@ class GapGRPOV3RewardManager(AbstractRewardManager):
                     self.ranking_weight * 0.0
                 )
                 
-                # Store 0.0 in extra_info for consistency
                 extra_info_item = data[i].non_tensor_batch.get("extra_info", {})
                 if not isinstance(extra_info_item, dict):
                     extra_info_item = {}

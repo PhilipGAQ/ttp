@@ -1,47 +1,17 @@
 #!/bin/bash
-# =============================================================================
-# Stage 3: GRPO Reinforcement Learning Training Script
-# =============================================================================
-# Paper: Think-to-Personalize (TTP)
-# Section 3.4 + Section 4.1.3 Implementation Details
-#
-# Paper Parameters (Section 4.1.3):
-#   - Backbone: Qwen2.5-3B-Instruct
-#   - RL Framework: VeRL
-#   - Group size (G): 8
-#   - Epochs: 3
-#   - Learning rate: 2e-7
-#   - Total training batch size: 128
-#   - Format weight (λ_fmt): 0.5
-#   - Length penalty weight (λ_len): 0.5, threshold L=64 tokens
-#   - Retrieval reward weight (λ_ret): 2.0
-#   - R_retrieval = α·ΔS_pos + β·ΔS_margin, α=2.0, β=1.0, clipped to [-1,1]
-#   - InfoNCE loss weight (λ_cl) in total objective: 0.1
-#   - InfoNCE temperature: 0.02
-#   - Input truncation: query + item = 512 tokens
-#   - GPUs: 8x NVIDIA A100
-#   - Dynamic Positive Selection: enabled (best rewrite by retrieval reward)
-# =============================================================================
-
 set -e
 
 export WANDB_DISABLED=true
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
-# ===== Paths (fill in your actual paths) =====
-MODEL_PATH="path/to/sft_checkpoint"              # Stage 2 SFT output model
-TRAIN_DATA="path/to/rl_train_data.jsonl"         # Top 30% highest-gain samples
+MODEL_PATH="path/to/sft_checkpoint"              
+TRAIN_DATA="path/to/rl_train_data.jsonl"         
 VAL_DATA="path/to/rl_val_data.jsonl"
 OUTPUT_DIR="path/to/output/grpo_checkpoint"
 
-# Optional: Reranker for reranker reward (disabled by default per paper)
-# export RERANKER_MODEL="BAAI/bge-reranker-v2-m3"
-
-# ===== Navigate to ttp_rl root =====
 cd "$(dirname "$0")/../ttp_rl"
 
-# ===== Launch GRPO Training =====
 python -m recipe.ttp_grpo.main_gap_grpo \
     --config-name gap_grpo_trainer \
     \
@@ -88,7 +58,7 @@ python -m recipe.ttp_grpo.main_gap_grpo \
     gap_config.infonce_temperature=0.02 \
     gap_config.normalized_embeddings=true \
     gap_config.use_best_rewrite_selection=true \
-    gap_config.mask_hist=true \
+    gap_config.mask_hist=false \
     \
     trainer.total_epochs=3 \
     trainer.nnodes=1 \

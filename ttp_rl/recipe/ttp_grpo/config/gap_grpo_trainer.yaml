@@ -1,21 +1,3 @@
-# GAP-GRPO v5 Trainer Configuration
-#
-# v5 新增功能：
-#   1. 添加 Reward Ref Model（冻结的初始模型副本，用于计算稳定的 retrieval reward）
-#   2. Rollout 模型生成改写，Reward Ref 模型计算 embeddings
-#   3. 保留 v4 的所有功能（Reranker Reward、Best selection、非对称 clip 等）
-#
-# 关键架构变化：
-#   - Reward Ref Model: 自动复用 ref_module（节省 ~7GB GPU 内存）
-#   - 在 role="actor_rollout_ref" 时，直接复用已加载的 ref_module 作为 reward_ref
-#   - 配置项: actor_rollout_ref.model.reward_ref_model_path（仅在 standalone rollout 时使用）
-#
-# 从 v4 继承的功能：
-#   1. 非对称 clip（负样本更宽松，正样本更严格）
-#   2. Reranker Reward（使用外部 reranker 模型）
-#   3. Best rewrite selection 使用 total_reward
-#   4. Reward mapping 和温度调整
-
 # Hydra search path to find base configs
 hydra:
   searchpath:
@@ -26,9 +8,7 @@ defaults:
   - ppo_trainer
   - _self_
 
-# Data configuration for GAP-GRPO v5
 data:
-  # Custom dataset class for gap-r1 format
   custom_cls:
     path: recipe/ttp_grpo/dataset.py
     name: GapGRPODataset
@@ -69,9 +49,7 @@ actor_rollout_ref:
   # Model path (should be a model with <emb> token in vocabulary)
   model:
     path: null  # Required: set via command line
-    # V5 优化：reward_ref 自动复用 ref_module（节省内存）
-    # reward_ref_model_path 仅在 standalone rollout 时需要（罕见）
-    reward_ref_model_path: null  # Optional: 默认复用 ref_module
+    reward_ref_model_path: null
     use_remove_padding: false
     enable_gradient_checkpointing: true
   
@@ -97,7 +75,6 @@ actor_rollout_ref:
     tensor_model_parallel_size: 1
     gpu_memory_utilization: 0.6
     log_prob_micro_batch_size_per_gpu: 16
-    # Number of generations per prompt (for GRPO)
     n: 8
     
     # Generation config
@@ -105,7 +82,6 @@ actor_rollout_ref:
     top_p: 0.95
     skip_special_tokens: false
     
-    # Max model length must be >= max_prompt_length + max_response_length
     max_model_len: 1024
   
   # Reference model settings
@@ -123,54 +99,36 @@ custom_reward_function:
 reward_model:
   _struct_: false
   enable: false  # Using custom reward function instead
-  # ⚠️ CRITICAL: Use gap_grpo reward manager (not batch)
-  # Note: The register name is still "gap_grpo" for backward compatibility
   reward_manager: gap_grpo
   
   # Reward function kwargs
   reward_kwargs:
-    # ===== Reward 权重（关键修改）=====
-    format_weight: 1.0          # 0.3 → 1.0 ⚠️ 提高格式约束
-    retrieval_weight: 0.5       # 0.5 → 0.5 ⚠️ 降低主导地位（原来可能是2.0）
-    ranking_weight: 0.5         # 0.2 → 0.5 ⚠️ 提高排名奖励
-    reranker_reward_weight: 0.0  # ⚠️ v4 新增：Reranker reward 权重（默认禁用，设为 > 0 启用）
+    format_weight: 1.0
+    retrieval_weight: 0.5
+    ranking_weight: 0.5
+    reranker_reward_weight: 0.0
     
-    # ===== Format Reward 参数（更严格的惩罚）=====
-    format_reward_value: 0.0    # 正确格式的奖励（实际返回0.0）
-    format_penalty_value: -3.0  # -0.5 → -3.0 ⚠️ 更严格的惩罚
-    length_threshold: 100       # 长度阈值
-    length_penalty: -0.5        # -0.1 → -0.5 ⚠️ 更严格
-    repetition_penalty: -1.0    # -0.2 → -1.0 ⚠️ 更严格
-    containment_penalty: -3.0   # -0.5 → -3.0 ⚠️ 更严格
-    
-    # ===== Retrieval Reward 参数（关键修改）=====
-    # ⚠️ 关键修改：只用 gap，去掉 pos（防止 hack）
-    retrieval_reward_pos_weight: 0.0    # 1.0 → 0.0 ⚠️ 关键修改！
-    retrieval_reward_neg_weight: 1.0    # 保持（作为 gap_weight）
-    
-    # ⚠️ 增大 temperature（降低敏感度）
-    temperature: 0.1            # 0.02 → 0.1 (5倍) ⚠️
-    
-    # ===== Reward Mapping（非对称 Clip）=====
+    format_reward_value: 0.0
+    format_penalty_value: -3.0
+    length_threshold: 100
+    length_penalty: -0.5
+    repetition_penalty: -1.0
+    containment_penalty: -3.0
+    retrieval_reward_pos_weight: 0.0
+    retrieval_reward_neg_weight: 1.0
+    temperature: 0.1
     use_retrieval_reward_map: true
+    use_asymmetric_clip: true
     
-    # ⚠️ 启用非对称 clip（关键修改）
-    use_asymmetric_clip: true   # ⚠️ 新增
-    
-    # 负样本：更宽松的 clip（允许区分"非常差"和"一般差"）
-    asymmetric_neg_clip: 200.0   # ⚠️ 新增：clip 到 [-200, 0]
-    asymmetric_neg_target: 5.0   # ⚠️ 新增：scale 到 [-5, 0]
-    
-    # 正样本：更严格的 clip（防止过度奖励）
-    asymmetric_pos_clip: 50.0    # ⚠️ 新增：clip 到 [0, 50]
-    asymmetric_pos_target: 1.0   # ⚠️ 新增：scale 到 [0, 1]
-    
-    # ===== Reranker Reward 参数（v4 新增）=====
-    reranker_model_path: "BAAI/bge-reranker-base"  # Reranker 模型路径
-    gain_scale: 1.0              # 正增益的缩放因子（当相似度提升时）
-    penalty_scale: 0.5          # 负增益的缩放因子（当相似度下降时）
-    min_reward: -1.0            # 最小 reward 值
-    max_reward: 1.0             # 最大 reward 值
+    asymmetric_neg_clip: 200.0
+    asymmetric_neg_target: 5.0
+    asymmetric_pos_clip: 50.0
+    asymmetric_pos_target: 1.0
+    reranker_model_path: "BAAI/bge-reranker-base"
+    gain_scale: 1.0
+    penalty_scale: 0.5
+    min_reward: -1.0
+    max_reward: 1.0
 
 # Algorithm configuration (GRPO)
 algorithm:
@@ -196,26 +154,16 @@ algorithm:
 gap_config:
   _struct_: false  # Allow adding new keys via command line
   
-  # ===== InfoNCE Loss =====
-  # InfoNCE 保持小 temperature（精确学习）
-  infonce_temperature: 0.02     # 不变
-  
-  # Whether to normalize embeddings
+  infonce_temperature: 0.02
   normalized_embeddings: true
-  
-  # Whether to mask history when computing query embedding for InfoNCE
   mask_hist: true
-  
-  # Special tokens
   emb_token: "<emb>"
   think_open: "<think>"
   think_close: "</think>"
   
-  # ===== Loss Weights =====
   rl_loss_weight: 1.0
   embedder_loss_weight: 1.0
   
-  # ===== Best Rewrite Selection (o1-embedder style) =====
   use_best_rewrite_selection: true
 
 # Trainer configuration
@@ -227,7 +175,7 @@ trainer:
   
   # Training schedule
   total_epochs: 10
-  critic_warmup: 0  # No critic warmup for GRPO
+  critic_warmup: 0
   
   # Checkpointing
   save_freq: 50
@@ -240,71 +188,11 @@ trainer:
   test_freq: -1
   
   # Logging
-  logger: ["console", "tensorboard"]  # tensorboard instead of wandb for simplicity
+  logger: ["console", "tensorboard"]
   project_name: gap_grpo
   experiment_name: gap_grpo_run
   log_val_generations: 5
   
-  # Balance batch for distributed training
   balance_batch: true
   
-  # Resume settings
   resume_mode: auto
-
-# ===== 使用说明 =====
-# 
-# 1. 基本命令：
-#   python main_gap_grpo.py \
-#     --config-name gap_grpo_trainer \
-#     actor_rollout_ref.model.path=/path/to/your/model \
-#     data.train_files=/path/to/train.jsonl \
-#     data.val_files=/path/to/val.jsonl
-#
-# 2. V5 新增：使用自定义 Reward Ref Model（可选）：
-#   python main_gap_grpo.py \
-#     --config-name gap_grpo_trainer \
-#     actor_rollout_ref.model.path=/path/to/actor/model \
-#     actor_rollout_ref.model.reward_ref_model_path=/path/to/reward_ref/checkpoint \
-#     data.train_files=/path/to/train.jsonl \
-#     data.val_files=/path/to/val.jsonl
-#   
-#   说明：如果不指定 reward_ref_model_path，默认使用 path（推荐）
-#
-# 3. 启用 Reranker Reward（从 v4 继承）：
-#   python main_gap_grpo.py \
-#     --config-name gap_grpo_trainer \
-#     actor_rollout_ref.model.path=/path/to/model \
-#     data.train_files=/path/to/train.jsonl \
-#     data.val_files=/path/to/val.jsonl \
-#     reward_model.reward_kwargs.reranker_reward_weight=0.5 \
-#     reward_model.reward_kwargs.reranker_model_path="BAAI/bge-reranker-base"
-#
-# 4. 覆盖配置（如果需要）：
-#   python main_gap_grpo.py \
-#     --config-name gap_grpo_trainer \
-#     actor_rollout_ref.model.path=/path/to/model \
-#     data.train_files=/path/to/train.jsonl \
-#     data.val_files=/path/to/val.jsonl \
-#     data.train_batch_size=128 \
-#     actor_rollout_ref.rollout.n=4 \
-#     reward_model.reward_kwargs.retrieval_weight=0.3
-#
-# 5. 监控指标：
-#   - custom/retrieval_reward_min: 不应该一直触及下界(-5)
-#   - custom/retrieval_reward_std: V5 应该比 V4 更稳定（波动减小 50%+）
-#   - custom/retrieval_reward_mean: V5 应该更稳定，不剧烈波动
-#   - custom/format_correct_ratio: ≥ 0.8
-#   - actor/infonce_loss: 初始值 < 1.5，稳定下降
-#   - custom/reranker_reward: 如果启用 reranker_reward_weight > 0
-#
-# ===== 如果问题仍然存在 =====
-#
-# 备选 A: 进一步降低 retrieval reward
-#   reward_model.reward_kwargs.retrieval_weight=0.3
-#   reward_model.reward_kwargs.asymmetric_neg_target=3.0
-#
-# 备选 B: 完全禁用 retrieval reward（只用 format + ranking + reranker）
-#   reward_model.reward_kwargs.retrieval_weight=0.0
-#   reward_model.reward_kwargs.format_weight=2.0
-#   reward_model.reward_kwargs.ranking_weight=1.0
-#   reward_model.reward_kwargs.reranker_reward_weight=0.5

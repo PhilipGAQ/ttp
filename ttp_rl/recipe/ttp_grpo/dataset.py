@@ -560,11 +560,7 @@ def collate_fn(data_list: List[Dict]) -> Dict:
                         )
         # Use np.array instead of np.fromiter for better handling of dict/list objects
         non_tensors[key] = np.array(val, dtype=object)
-    
-    # 🔑 CRITICAL: Pre-create placeholder for retrieval_scores so that it survives union_numpy_dict
-    # If we don't create this key here, the key added by rollout worker will be dropped
-    # when merging non_tensor_batch across ranks, and RewardManager will see None.
-    # Ensure retrieval_scores is always at least 1D array to prevent IndexError in chunk()
+
     if "retrieval_scores" not in non_tensors:
         batch_size = len(data_list)
         if batch_size > 0:

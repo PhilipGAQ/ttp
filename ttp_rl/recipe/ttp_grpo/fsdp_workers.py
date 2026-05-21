@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Custom FSDP Worker for GAP-GRPO v3 training.
+Custom FSDP Worker for GAP-GRPO training.
 
 This module provides GapGRPOV3RolloutRefWorker, which extends ActorRolloutRefWorker
 to use GapGRPOActor and compute retrieval scores during rollout.
@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
     """
-    Custom Worker for GAP-GRPO v3 training.
+    Custom Worker for GAP-GRPO training.
     
     This worker extends ActorRolloutRefWorker and:
     1. Uses GapGRPOActor instead of the default DataParallelPPOActor when gap_config is present
@@ -162,24 +162,19 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 )
 
         if self._is_rollout:
-            # 🔑 V5: Extract and REMOVE reward_ref_model_path BEFORE _build_rollout
-            # This prevents it from being passed to HFModelConfig (which doesn't recognize it)
             reward_ref_model_path_config = self.config.model.get("reward_ref_model_path", None)
             
-            # Temporarily remove reward_ref_model_path from config to avoid HFModelConfig error
             if "reward_ref_model_path" in self.config.model:
                 with open_dict(self.config.model):
                     del self.config.model["reward_ref_model_path"]
             
             self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
             
-            # Initialize gap_config for rollout
             gap_config = None
             if hasattr(self.config, 'gap_config'):
                 gap_config = self.config.gap_config
             
             if gap_config is not None:
-                # Get tokenizer for rollout
                 tokenizer = getattr(self, 'tokenizer', None)
                 if tokenizer is None:
                     local_path = copy_to_local(
@@ -193,7 +188,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 self.rollout_tokenizer = tokenizer
                 self.gap_config = gap_config
                 
-                # Get emb_token_id
                 self.emb_token = gap_config.get("emb_token", "<emb>")
                 try:
                     self.emb_token_id = tokenizer.convert_tokens_to_ids(self.emb_token)
@@ -232,22 +226,16 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 self.config.ref.use_fused_kernels = use_fused_kernels
             self.ref_policy = DataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module_fsdp)
         
-        # ===== V5 Optimization: Reuse ref_module as reward_ref for Stable Retrieval Rewards =====
         if self._is_rollout:
-            # 优先复用 ref_module_fsdp（节省内存和加载时间）
-            # 在 role="actor_rollout_ref" 时，ref_module 已在上面加载，可以直接复用
             if hasattr(self, 'ref_module_fsdp') and self.ref_module_fsdp is not None:
-                # ✅ 最常见情况（role="actor_rollout_ref"）：直接复用 ref_module
                 self.reward_ref_module_fsdp = self.ref_module_fsdp
                 if rank == 0:
-                    print_rank_0(f"[GapGRPOV5] ✅ Reusing ref_module as reward_ref_module for stable embeddings")
-                    print_rank_0(f"[GapGRPOV5] This saves ~7GB GPU memory by avoiding duplicate model loading")
+                    print_rank_0(f"[GapGRPO] Reusing ref_module as reward_ref_module for stable embeddings")
+                    print_rank_0(f"[GapGRPO] This saves ~7GB GPU memory by avoiding duplicate model loading")
             else:
-                # ⚠️  Fallback: standalone rollout (role="rollout") 或 ref 未配置时
                 if rank == 0:
-                    print_rank_0(f"[GapGRPOV5] ⚠️  ref_module not available, loading dedicated reward_ref_module")
+                    print_rank_0(f"[GapGRPO] ref_module not available, loading dedicated reward_ref_module")
                 
-                # 尝试获取 reward_ref_model_path（如果之前提取过）
                 reward_ref_model_path = None
                 try:
                     reward_ref_model_path = reward_ref_model_path_config
@@ -255,10 +243,10 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                     pass
                 
                 if reward_ref_model_path is None:
-                    reward_ref_model_path = self.config.model.path  # 默认使用 actor 路径
+                    reward_ref_model_path = self.config.model.path
                 
                 if rank == 0:
-                    print_rank_0(f"[GapGRPOV5] Loading reward ref model from: {reward_ref_model_path}")
+                    print_rank_0(f"[GapGRPO] Loading reward ref model from: {reward_ref_model_path}")
                 
                 local_path = copy_to_local(reward_ref_model_path, use_shm=use_shm)
                 self.reward_ref_module_fsdp = self._build_model_optimizer(
@@ -279,8 +267,8 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 
                 if rank == 0:
                     total_params = sum(p.numel() for p in self.reward_ref_module_fsdp.parameters())
-                    print_rank_0(f"[GapGRPOV5] Reward ref model loaded and frozen ({total_params / 1e9:.2f}B parameters)")
-                    print_rank_0(f"[GapGRPOV5] Reward ref model will be used for computing stable embeddings")
+                    print_rank_0(f"[GapGRPO] Reward ref model loaded and frozen ({total_params / 1e9:.2f}B parameters)")
+                    print_rank_0(f"[GapGRPO] Reward ref model will be used for computing stable embeddings")
 
         if self._is_actor:
             from verl.utils.flops_counter import FlopsCounter
@@ -302,7 +290,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
             pass
     
     def _find_emb_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Find positions of <emb> token in input sequences."""
         batch_size = input_ids.size(0)
         positions = torch.full((batch_size,), -1, dtype=torch.long, device=input_ids.device)
         
@@ -323,7 +310,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         hidden_states: torch.Tensor,
         input_ids: torch.Tensor,
     ) -> torch.Tensor:
-        """Extract embeddings at <emb> token positions."""
         batch_size, seq_len, hidden_dim = hidden_states.size()
         
         emb_positions = self._find_emb_positions(input_ids)
@@ -334,7 +320,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         idx = safe_positions.unsqueeze(-1).unsqueeze(-1).expand(-1, 1, hidden_dim)
         embeddings = torch.gather(hidden_states, dim=1, index=idx).squeeze(1)
         
-        # Normalize embeddings
         embeddings = F.normalize(embeddings, dim=-1)
         
         return embeddings
@@ -344,13 +329,11 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         texts: List[str],
         model,
     ) -> Optional[torch.Tensor]:
-        """Compute embeddings for a list of texts using the model."""
         if not texts or self.rollout_tokenizer is None or self.emb_token_id is None:
             return None
         
         device = get_device_id()
         
-        # Tokenize texts
         encoded = self.rollout_tokenizer(
             texts,
             padding=True,
@@ -363,7 +346,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device)
         
-        # Add <emb> token if not present
         batch_size = input_ids.size(0)
         max_seq_len = input_ids.size(1)
         
@@ -381,7 +363,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 else:
                     input_ids[i, last_pos] = self.emb_token_id
         
-        # Forward pass
         with torch.no_grad():
             output = model(
                 input_ids=input_ids,
@@ -392,22 +373,12 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
             )
             last_hidden = output.hidden_states[-1]
         
-        # Extract embeddings
         embeddings = self._extract_embeddings(last_hidden, input_ids)
         
         return embeddings
     
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="rollout"))
     def generate_sequences(self, prompts: DataProto):
-        """
-        Generate sequences and compute retrieval scores.
-        
-        This method extends the base generate_sequences to:
-        1. Generate responses as usual
-        2. Compute original query and rewritten query embeddings
-        3. Compute similarity scores for retrieval reward and nDCG reward
-        4. Store embeddings and scores in extra_info for reward_manager
-        """
         import asyncio
         from verl.utils.profiler import simple_timer
         from verl.utils.profiler.performance import reduce_timing, topk_reduce_ratio_min_max
@@ -441,29 +412,20 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After switch to trainer mode", logger=logger)
 
         # Compute retrieval scores if gap_config is present
-        # 🔑 CRITICAL: Initialize retrieval_scores BEFORE any conditional logic
-        # This ensures ALL workers have the same keys in non_tensor_batch, preventing AssertionError
-        # when merging DataProto from different workers
         batch_size = len(output) if hasattr(output, '__len__') else 0
         if "retrieval_scores" not in output.non_tensor_batch:
-            # Ensure retrieval_scores is always at least 1D array (even if batch_size == 0)
-            # This prevents IndexError in chunk() when np.array_split tries to access shape[0]
             if batch_size > 0:
                 output.non_tensor_batch["retrieval_scores"] = np.array([None] * batch_size, dtype=object)
             else:
-                # Create empty 1D array instead of 0D scalar
                 output.non_tensor_batch["retrieval_scores"] = np.array([], dtype=object)
         else:
-            # Ensure existing retrieval_scores is at least 1D (fix if corrupted)
             existing_scores = output.non_tensor_batch["retrieval_scores"]
             if not isinstance(existing_scores, np.ndarray):
-                # Convert to numpy array if it's not
                 if batch_size > 0:
                     output.non_tensor_batch["retrieval_scores"] = np.array([None] * batch_size, dtype=object)
                 else:
                     output.non_tensor_batch["retrieval_scores"] = np.array([], dtype=object)
             elif existing_scores.ndim == 0:
-                # Fix 0D scalar to 1D array
                 if batch_size > 0:
                     output.non_tensor_batch["retrieval_scores"] = np.array([None] * batch_size, dtype=object)
                 else:
@@ -473,48 +435,37 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         if gap_config is not None and hasattr(self, 'rollout_tokenizer') and self.emb_token_id is not None:
             try:
                 # Get model for embedding computation
-                # V5: Use reward_ref_module for stable embeddings (frozen model)
-                # Fallback to actor_module if reward_ref not available (backward compatibility)
                 model = getattr(self, 'reward_ref_module_fsdp', None)
                 if model is None:
-                    # Fallback to actor_module if reward_ref not available
                     model = getattr(self, 'actor_module_fsdp', None)
                     if model is None:
                         model = getattr(self, 'actor_module', None)
-                    print_rank_0("[GapGRPOV5] ⚠️  Warning: reward_ref_module not found, falling back to actor_module for embeddings")
+                    print_rank_0("[GapGRPO] Warning: reward_ref_module not found, falling back to actor_module for embeddings")
                 else:
-                    print_rank_0("[GapGRPOV5] 🎯 Using reward_ref_module for stable embedding computation")
+                    print_rank_0("[GapGRPO] Using reward_ref_module for stable embedding computation")
                 
                 if model is not None:
-                    model.eval()  # Set to eval mode for rollout
+                    model.eval()
                     
-                    # 🔑 CRITICAL FIX: Get ground_truth from output (after vLLM preserves non_tensor_batch)
-                    # With the vLLM fix, output now contains the complete non_tensor_batch including reward_model
-                    
-                    # Batch process for efficiency
                     all_ori_queries = []
                     all_rewritten_queries = []
                     all_passages_list = []  # List of lists
                     valid_indices = []
                     
-                    # Debug: track why samples are skipped
                     skipped_reasons = {"no_ground_truth": 0, "no_original_query": 0, "no_passages": 0, "valid": 0}
                     
-                    # First pass: collect all texts
+                    think_open = gap_config.get("think_open", "<think>")
+                    think_close = gap_config.get("think_close", "</think>")
+                    mask_hist = gap_config.get("mask_hist", True)
+                    
                     for i in range(batch_size):
                         data_item = output[i]
                         
-                        # Get prompt and response
                         prompt_ids = data_item.batch["prompts"]
                         response_ids = data_item.batch["responses"]
                         
-                        # Decode to get texts
                         prompt_str = self.rollout_tokenizer.decode(prompt_ids, skip_special_tokens=False)
                         response_str = self.rollout_tokenizer.decode(response_ids, skip_special_tokens=False)
-                        
-                        # Extract rewritten query from response
-                        think_open = gap_config.get("think_open", "<think>")
-                        think_close = gap_config.get("think_close", "</think>")
                         pattern = rf"{re.escape(think_open)}(.+?){re.escape(think_close)}\s*{re.escape(self.emb_token)}"
                         match = re.search(pattern, response_str, re.DOTALL)
                         
@@ -523,7 +474,6 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                         else:
                             rewritten_query = response_str.strip()
                         
-                        # 🔑 KEY FIX: Get ground_truth from output (vLLM now preserves non_tensor_batch)
                         ground_truth = data_item.non_tensor_batch.get("reward_model", {}).get("ground_truth", {})
                         
                         if not ground_truth:
@@ -541,9 +491,14 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                             continue
                         
                         clean_query = original_query.split("geohash")[0].strip()
-                        query_prompt_no_hist = ground_truth.get("query_prompt_no_hist", prompt_str)
                         
-                        # Get passages
+                        # mask_hist=True: use query_prompt_no_hist (without history)
+                        # mask_hist=False: use prompt_str (full prompt with history)
+                        if mask_hist:
+                            query_prompt_for_emb = ground_truth.get("query_prompt_no_hist", prompt_str)
+                        else:
+                            query_prompt_for_emb = prompt_str
+                        
                         pos_passages = ground_truth.get("pos", [])
                         if isinstance(pos_passages, str): pos_passages = [pos_passages]
                         neg_passages = ground_truth.get("neg", [])
@@ -555,17 +510,15 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                             skipped_reasons["no_passages"] += 1
                             continue
                         
-                        # All checks passed, add to valid samples
-                        ori_text = f"{query_prompt_no_hist}{think_open}{clean_query}{think_close}{self.emb_token}"
-                        rew_text = f"{query_prompt_no_hist}{think_open}{rewritten_query}{think_close}{self.emb_token}"
+                        ori_text = f"{query_prompt_for_emb}{think_open}{clean_query}{think_close}{self.emb_token}"
+                        rew_text = f"{query_prompt_for_emb}{think_open}{rewritten_query}{think_close}{self.emb_token}"
                         
                         all_ori_queries.append(ori_text)
                         all_rewritten_queries.append(rew_text)
                         all_passages_list.append((all_passages, len(pos_passages)))
                         valid_indices.append(i)
                         skipped_reasons["valid"] += 1
-                    
-                    # Print summary only if there are errors
+
                     if skipped_reasons.get("no_ground_truth", 0) > 0 or skipped_reasons.get("no_original_query", 0) > 0 or skipped_reasons.get("no_passages", 0) > 0:
                         print_rank_0(f"[GapGRPOV3RolloutRefWorker] Warning: Sample collection issues - {skipped_reasons}, valid_indices: {len(valid_indices)}")
                     
@@ -630,11 +583,7 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                                 output.non_tensor_batch["retrieval_scores"][i] = retrieval_data
                             
                             print_rank_0(f"[GapGRPOV5] ========== Reward_ref_module inference completed successfully ({len(valid_indices)} samples processed) ==========")
-                    
-                    # 🔑 CRITICAL: DELETE all metadata keys from Worker output to avoid union collision
-                    # Driver already has these from original batch
-                    # Note: RewardManager will re-populate extra_info with pos_text/query_prompt_no_hist
-                    # Ensure we delete the same keys on all workers (even if some don't have them)
+
                     keys_to_delete = ["extra_info", "pos_text", "neg_texts", "query_prompt_no_hist"]
                     for key in keys_to_delete:
                         if key in output.non_tensor_batch:
@@ -644,9 +593,7 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                 import traceback
                 print_rank_0(f"[GapGRPOV5] ❌ Error: Reward_ref_module inference failed: {e}")
                 print_rank_0(f"[GapGRPOV5] Traceback:\n{traceback.format_exc()}")
-                
-                # 🔑 CRITICAL: Ensure retrieval_scores exists even on exception
-                # This prevents AssertionError when merging DataProto from different workers
+
                 batch_size = len(output) if hasattr(output, '__len__') else 0
                 if "retrieval_scores" not in output.non_tensor_batch:
                     # Ensure retrieval_scores is always at least 1D array (even if batch_size == 0)
@@ -665,22 +612,16 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
                         else:
                             output.non_tensor_batch["retrieval_scores"] = np.array([], dtype=object)
                 
-                # 🔑 CRITICAL: Ensure we delete the same keys on all workers (even on exception)
-                # This ensures consistent non_tensor_batch keys across all workers
                 keys_to_delete = ["extra_info", "pos_text", "neg_texts", "query_prompt_no_hist"]
                 for key in keys_to_delete:
                     if key in output.non_tensor_batch:
                         del output.non_tensor_batch[key]
         
-        # 🔑 CRITICAL: Ensure consistent non_tensor_batch keys across ALL workers
-        # Delete metadata keys that should not be in worker output (even if gap_config is None)
-        # This prevents AssertionError when merging DataProto from different workers
         keys_to_delete = ["extra_info", "pos_text", "neg_texts", "query_prompt_no_hist"]
         for key in keys_to_delete:
             if key in output.non_tensor_batch:
                 del output.non_tensor_batch[key]
 
-        # We calculate the average timing across all ranks
         timing_generate_topk_ratio, timing_generate_min, timing_generate_max = topk_reduce_ratio_min_max(
             timing_generate["generate_sequences"]
         )
@@ -695,30 +636,20 @@ class GapGRPOV3RolloutRefWorker(ActorRolloutRefWorker):
         output.meta_info["timing"] = timing_generate
         output = output.to("cpu")
 
-        # 🔑 CRITICAL: Ensure ALL non_tensor_batch values are at least 1D arrays
-        # This prevents IndexError in chunk() when np.array_split tries to access shape[0]
-        # Fix any 0D scalars or corrupted arrays before returning
         if hasattr(output, 'non_tensor_batch') and output.non_tensor_batch:
-            # Recalculate batch_size to ensure it's current
             current_batch_size = len(output) if hasattr(output, '__len__') else 0
             for key, val in list(output.non_tensor_batch.items()):
                 if isinstance(val, np.ndarray):
                     if val.ndim == 0:
-                        # Convert 0D scalar to 1D array
-                        # If current_batch_size > 0, create array with current_batch_size elements
-                        # Otherwise, create empty 1D array
                         if current_batch_size > 0:
-                            # Try to preserve the value by repeating it
                             output.non_tensor_batch[key] = np.array([val.item()] * current_batch_size, dtype=val.dtype)
                         else:
                             output.non_tensor_batch[key] = np.array([], dtype=val.dtype)
                 elif not isinstance(val, np.ndarray):
-                    # Convert non-array to array
                     if current_batch_size > 0:
                         output.non_tensor_batch[key] = np.array([val] * current_batch_size, dtype=object)
                     else:
                         output.non_tensor_batch[key] = np.array([], dtype=object)
 
-        # clear kv cache
         get_torch_device().empty_cache()
         return output

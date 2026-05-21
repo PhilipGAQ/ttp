@@ -264,8 +264,8 @@ def compute_retrieval_reward(
         reward = pos_weight * delta_pos + gap_weight * delta_gap
         
         where:
-        - delta_pos = (rewritten_pos - ori_pos)  # 正样本分数提升
-        - delta_gap = (rewritten_gap - ori_gap)  # 正负分差提升
+        - delta_pos = (rewritten_pos - ori_pos)  
+        - delta_gap = (rewritten_gap - ori_gap)  
         - gap = pos_score - neg_mean
     
     Args:
