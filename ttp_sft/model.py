@@ -135,7 +135,7 @@ class QueryGenModel(BaseModel):
         if features is None: return None
         attention_mask = features.get('attention_mask')
         kwargs = {'input_ids': features.get('input_ids'), 'attention_mask': attention_mask}
-        out = self.model(**kwargs, is_causal=True, return_dict=True, output_hidden_states=True).hidden_states[-1]
+        out = self.model(**kwargs, return_dict=True, output_hidden_states=True).hidden_states[-1]
         # Prefer pooling at <emb> positions if provided
         emb_pos = features.get('embed_pos')
         if emb_pos is not None:
@@ -349,10 +349,10 @@ class QueryGenModel(BaseModel):
                             base4[i, 0, epos, 0:s] = -1e9
             
             query_inputs = {k: v for k, v in query_sub.items() if k not in excluded_keys}
-            outputs = self.model(**{**query_inputs, 'attention_mask': base4}, is_causal=True, return_dict=True, output_hidden_states=True)
+            outputs = self.model(**{**query_inputs, 'attention_mask': base4}, return_dict=True, output_hidden_states=True)
         else:
             query_inputs = {k: v for k, v in query_sub.items() if k not in excluded_keys}
-            outputs = self.model(**query_inputs, is_causal=True, return_dict=True, output_hidden_states=True)
+            outputs = self.model(**query_inputs, return_dict=True, output_hidden_states=True)
         
         # Compute generation loss if labels are present and loss_gen_factor != 0
         loss_gen = None

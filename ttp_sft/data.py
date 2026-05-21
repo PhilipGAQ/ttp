@@ -77,15 +77,16 @@ class MultiFileDataset(torch.utils.data.Dataset):
         if not isinstance(effective_train_group_size, int) or effective_train_group_size <= 0:
             effective_train_group_size = int(self.default_train_group_size)
         num_negs = max(0, effective_train_group_size - 1)
-        negs = data['neg']
-        if len(negs) >= num_negs:
-            chosen_indices = random.sample(range(len(negs)), num_negs)
-            passages.extend([negs[i] for i in chosen_indices])
-        else:
-            # sample with replacement when not enough negatives
-            for _ in range(num_negs):
-                neg_ids = random.randrange(len(negs))
-                passages.append(negs[neg_ids])
+        if num_negs > 0:
+            negs = data.get('neg', [])
+            if len(negs) >= num_negs:
+                chosen_indices = random.sample(range(len(negs)), num_negs)
+                passages.extend([negs[i] for i in chosen_indices])
+            elif len(negs) > 0:
+                # sample with replacement when not enough negatives
+                for _ in range(num_negs):
+                    neg_ids = random.randrange(len(negs))
+                    passages.append(negs[neg_ids])
 
         return query, passages, query_gen, hist_list, meta
 
@@ -413,14 +414,17 @@ class QueryGenCollator(DataCollatorWithPadding):
             # find <emb> positions per passage
             emb_id = self.tokenizer.convert_tokens_to_ids(emb_tok)
             p_embed_pos = []
-            for ids in passage_tok["input_ids"]:
+            pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            for batch_idx, ids in enumerate(passage_tok["input_ids"]):
                 ids_list = ids.tolist()
                 ppos = max([i for i, tid in enumerate(ids_list) if tid == emb_id], default=-1)
                 if ppos == -1:
-                    # force last non-pad token to <emb>
+                    # find last non-pad position and force it to <emb>
                     last_idx = len(ids_list) - 1
+                    while last_idx > 0 and ids_list[last_idx] == pad_id:
+                        last_idx -= 1
                     if last_idx >= 0:
-                        ids_list[last_idx] = emb_id
+                        passage_tok["input_ids"][batch_idx, last_idx] = emb_id
                     ppos = last_idx
                 p_embed_pos.append(ppos)
             passage_tok["embed_pos"] = torch.tensor(p_embed_pos, dtype=torch.long)

@@ -69,6 +69,7 @@ accelerate launch \
     --embedding_view both \
     --mask_history True \
     --gradient_checkpointing True \
+    --dataloader_drop_last True \
     --save_steps 500 \
     --logging_steps 1 \
     --overwrite_output_dir True
