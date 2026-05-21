@@ -80,8 +80,8 @@ class BaseModel(torch.nn.Module):
             return_tensors='pt', add_special_tokens=add_special_tokens,
         ).to(self.model.device)
         with torch.no_grad():
-            outputs = self.model(**tok, output_hidden_states=False, return_dict=True)
-            last_hidden = outputs.last_hidden_state
+            outputs = self.model(**tok, output_hidden_states=True, return_dict=True)
+            last_hidden = outputs.hidden_states[-1]
         emb_id = self.tokenizer.convert_tokens_to_ids(emb_token)
         emb_pos: List[int] = []
         for ids in tok["input_ids"]:

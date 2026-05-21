@@ -36,14 +36,6 @@ class QueryGenTrainer(Trainer):
             if loss_gen is not None:
                 self.summary_writer.add_scalar('train/loss_gen', loss_gen.item(), step)
 
-        # Log to Trainer's logger
-        log_dict = {'loss': loss.detach().item()}
-        if loss_emb is not None:
-            log_dict['loss_emb'] = loss_emb.detach().item()
-        if loss_gen is not None:
-            log_dict['loss_gen'] = loss_gen.detach().item()
-        self.log(log_dict)
-
         self.accelerator.backward(loss)
-        return loss.detach() / self.args.gradient_accumulation_steps
+        return loss.detach()
 
