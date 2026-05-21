@@ -1,6 +1,6 @@
 # TTP: Think-to-Personalize
 
-Official implementation of **"Think-to-Personalize: Unifying Reasoning and Retrieval for User-Centric Personalized Dense Retrieval"** (CIKM 2025).
+Official implementation of **"Think-to-Personalize: Unifying Reasoning and Retrieval for User-Centric Personalized Dense Retrieval"**.
 
 ## Repository Structure
 
@@ -27,30 +27,27 @@ ttp/
 
 **`ttp_rl/recipe/ttp_grpo/`** — GRPO RL alignment. Composite reward (format + length + retrieval) drives the policy to generate better intent-enhanced queries. Includes Dynamic Positive Selection for InfoNCE and a frozen SFT model as both KL reference and retrieval reward model.
 
-**`distill_retriever/`** — Distills the 3B TTP model into a lightweight bi-encoder (305M) for online deployment.
+**`distill_retriever/`** — Distills the TTP model into a lightweight bi-encoder for online deployment.
 
 ## Environment Setup
 
-The two training stages use **different environments**:
+Note that we validate the implementation of stage 1 and stage 2 on different environments.
 
-| | Stage 1 (SFT & Distill) | Stage 2 (GRPO RL) |
-|---|---|---|
-| PyTorch | 2.6.0 | 2.8.0 |
-| Transformers | 4.51.2 | 4.57.1 |
-| vLLM | 0.8.5 | 0.10.2 |
-
-```bash
-# Stage 1 environment
-conda create -n ttp_sft python=3.10 && conda activate ttp_sft
-pip install -r requirements/sft.txt
-
-# Stage 2 environment
-conda create -n ttp_rl python=3.10 && conda activate ttp_rl
-pip install -r requirements/rl.txt
-cd ttp_rl && pip install -e .
+```
+requirements/sft.txt
+requirements/rl.txt
 ```
 
-Hardware: 8× NVIDIA A100 80GB GPUs.
+## Data Construction
+
+Training data is constructed via a teacher model (Qwen3-32B) following a filter → rewrite → select pipeline:
+
+1. **History filtering**: For each user query, select the top-10 most relevant items from the user's purchase history using bge-reranker-v2-m3.
+2. **Candidate generation**: Prompt Qwen3-32B with the user history and query to generate K=5 candidate intent-enhanced rewrites.
+3. **Quality selection**: Score each rewrite by retrieval relevance gain (cosine similarity improvement over the original query against the ground-truth positive item). Keep the best rewrite per query.
+4. **Data split**: Samples with positive gain are used for both SFT and RL. The top-30% highest-gain samples are additionally used as the RL training set.
+
+Each training sample contains: `query`, `pos` (positive item), `neg` (hard negatives), and `query_gen` (the teacher-generated rewrite as the SFT target).
 
 ## Training
 
@@ -75,18 +72,3 @@ bash scripts/run_grpo.sh
 ```bash
 bash scripts/run_distill_retriever.sh
 ```
-
-## Citation
-
-```bibtex
-@inproceedings{ttp2025,
-  title={Think-to-Personalize: Unifying Reasoning and Retrieval for User-Centric Personalized Dense Retrieval},
-  author={Anonymous},
-  booktitle={Proceedings of CIKM},
-  year={2025}
-}
-```
-
-## Acknowledgments
-
-The RL training infrastructure is built upon [VeRL](https://github.com/volcengine/verl).
